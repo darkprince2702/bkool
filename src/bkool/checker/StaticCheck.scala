@@ -60,13 +60,13 @@ class ClassEnvironment extends CheckingVisitor {
 
   override def visitVarDecl(ast: VarDecl, c: Context) = {
     val env = c.asInstanceOf[SymbolList].list
-    val newenv = if (env.exists(x => x._1 == ast.variable.toString())) throw Redeclared(Attribute, ast.variable.toString()) else (ast.variable.toString(), ast.varType, Attribute) :: env
+    val newenv = if (env.exists(x => x._1 == ast.variable.toString())) throw Redeclared(Attribute, ast.variable.toString()) else (ast.variable.toString(), ast.varType, Variable) :: env
     SymbolList(newenv)
   }
 
   override def visitConstDecl(ast: ConstDecl, c: Context) = {
     val env = c.asInstanceOf[SymbolList].list
-    val newenv = if (env.exists(x => x._1 == ast.id.toString())) throw Redeclared(Attribute, ast.id.toString()) else (ast.id.toString(), ast.constType, Attribute) :: env
+    val newenv = if (env.exists(x => x._1 == ast.id.toString())) throw Redeclared(Attribute, ast.id.toString()) else (ast.id.toString(), ast.constType, Constant) :: env
     SymbolList(newenv)
   }
 
@@ -90,6 +90,8 @@ class ClassEnvironment extends CheckingVisitor {
 class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   var parammeterFlag = false;
   var memberAccessFlag = false;
+  var assignmentFlag = false;
+  var constantFlag = false;
 
   override def visitProgram(ast: Program, c: Context) = ast.decl.map(visit(_, null))
 
@@ -155,8 +157,8 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   }
 
   override def visitBinaryOp(ast: BinaryOp, c: Context) = {
-    val typeOfLeft = visit(ast.left, c)
-    val typeOfRight = visit(ast.right, c)
+    val typeOfLeft = visit(ast.left, c).asInstanceOf[(Type, Kind)]
+    val typeOfRight = visit(ast.right, c).asInstanceOf[(Type, Kind)]
     typeOfRight
   }
 
@@ -169,15 +171,15 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
     val findClass = lookup(ast.name.name, clenv.list, (x: ClassSymbolList) => x.name)
     findClass match {
       case None => throw Undeclared(Class, ast.name.name)
-      case Some(t) => ClassType(t.name)
+      case Some(t) => (ClassType(t.name), Variable)
     }
   }
 
   override def visitCallExpr(ast: CallExpr, c: Context) = {
     ast.params.map(visit(_, c))
     if (ast.cName.isInstanceOf[Id]) memberAccessFlag = true
-    val callType = visit(ast.cName, c)
-    callType match {
+    val callType = visit(ast.cName, c).asInstanceOf[(Type, Kind)]
+    callType._1 match {
       case ClassType(name) => {
         val findClass = lookup(name, clenv.list, (x: ClassSymbolList) => x.name)
         findClass match {
@@ -187,7 +189,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
             method match {
               case None => throw Undeclared(Method, ast.method.name)
               case Some(t) => if (t._3 != Method) throw Undeclared(Method, ast.method.name) else {
-                t._2
+                (t._2, t._3)
               }
             }
           }
@@ -209,30 +211,30 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
               case None => throw Undeclared(Identifier, ast.name)
               case Some(t) => {
                 memberAccessFlag = false;
-                ClassType(ast.name)
+                (ClassType(ast.name), Variable)
               }
             }
           }
           case false => throw Undeclared(Identifier, ast.name)
         }
       }
-      case Some(t) => t._2
+      case Some(t) => (t._2, t._3)
     }
   }
 
   override def visitArrayCell(ast: ArrayCell, c: Context) = {
     visit(ast.idx, c)
-    val arrayType = visit(ast.arr, c)
-    arrayType match {
-      case ArrayType(_, t) => t
+    val arrayType = visit(ast.arr, c).asInstanceOf[(Type, Kind)]
+    arrayType._1 match {
+      case ArrayType(_, t) => (t, arrayType._2)
       case _ => arrayType
     }
   }
 
   override def visitFieldAccess(ast: FieldAccess, c: Context) = {
     if (ast.name.isInstanceOf[Id]) memberAccessFlag = true
-    val fieldType = visit(ast.name, c)
-    fieldType match {
+    val fieldType = visit(ast.name, c).asInstanceOf[(Type, Kind)]
+    fieldType._1 match {
       case ClassType(name) => {
         val findClass = lookup(name, clenv.list, (x: ClassSymbolList) => x.name)
         findClass match {
@@ -241,8 +243,8 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
             val field = lookupInClass(ast.field.name, t, clenv.list)
             field match {
               case None => throw Undeclared(Attribute, ast.field.name)
-              case Some(t) => if (t._3 != Attribute) throw Undeclared(Attribute, ast.field.name) else {
-                t._2
+              case Some(t) => if (t._3 != Constant && t._3 != Variable) throw Undeclared(Attribute, ast.field.name) else {
+                (t._2, t._3)
               }
             }
           }
@@ -264,7 +266,9 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   }
 
   override def visitAssign(ast: Assign, c: Context) = {
-    visit(ast.leftHandSide, c)
+    val LHS = visit(ast.leftHandSide, c).asInstanceOf[(Type, Kind)]
+    println(LHS)
+    if (LHS._2 == Constant) throw CannotAssignToConstant(ast)
     visit(ast.expr, c)
     c
   }
@@ -300,6 +304,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
       case _ => c
     }
   }
+
   override def visitWhile(ast: While, c: Context) = {
     visit(ast.expr, c)
     visit(ast.loop, c)
@@ -311,18 +316,18 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
     c
   }
 
-  override def visitIntLiteral(ast: IntLiteral, c: Context) = IntType
+  override def visitIntLiteral(ast: IntLiteral, c: Context) = (IntType, Constant)
 
-  override def visitFloatLiteral(ast: FloatLiteral, c: Context) = FloatType
+  override def visitFloatLiteral(ast: FloatLiteral, c: Context) = (FloatType, Constant)
 
-  override def visitStringLiteral(ast: StringLiteral, c: Context) = StringType
+  override def visitStringLiteral(ast: StringLiteral, c: Context) = (StringType, Constant)
 
-  override def visitBooleanLiteral(ast: BooleanLiteral, c: Context) = BoolType
+  override def visitBooleanLiteral(ast: BooleanLiteral, c: Context) = (BoolType, Constant)
 
-  override def visitNullLiteral(ast: NullLiteral.type, c: Context) = NullType
+  override def visitNullLiteral(ast: NullLiteral.type, c: Context) = (NullType, Constant)
 
   override def visitSelfLiteral(ast: SelfLiteral.type, c: Context) = {
-    ClassType(c.asInstanceOf[ClassSymbolList].name)
+    (ClassType(c.asInstanceOf[ClassSymbolList].name), Variable)
   }
 }
 
@@ -367,6 +372,7 @@ class CheckingVisitor extends Visitor {
   override def visitSelfLiteral(ast: SelfLiteral.type, c: Context): Object = c
 }
 
+case class Property(Type: Type, kind: Kind) extends Context
 case class SymbolList(list: List[(String, Type, Kind)]) extends Context
 case class ClassSymbolList(name: String, parent: String, symlst: SymbolList) extends Context
 case class GlobalSymbolList(list: List[ClassSymbolList]) extends Context
