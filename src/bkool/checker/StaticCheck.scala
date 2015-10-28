@@ -24,74 +24,82 @@ class StaticChecker(ast: AST) {
 }
 
 class GlobalEnvironment extends CheckingVisitor {
-  override def visitProgram(ast: Program, c: Context) = ast.decl.foldLeft(SymbolList(List[(String, Type, Kind)](("io", ClassType("io"), Class))))((x, y) => visit(y, x).asInstanceOf[SymbolList])
-
-  override def visitVarDecl(ast: VarDecl, c: Context) = {
-    val env = c.asInstanceOf[SymbolList].list
-    val newenv = if (env.exists(x => x._1 == ast.variable.toString())) throw Redeclared(Attribute, ast.variable.toString()) else (ast.variable.toString(), ast.varType, Variable) :: env
-    SymbolList(newenv)
-  }
-
-  override def visitConstDecl(ast: ConstDecl, c: Context) = {
-    val env = c.asInstanceOf[SymbolList].list
-    val newenv = if (env.exists(x => x._1 == ast.id.toString())) throw Redeclared(Attribute, ast.id.toString()) else (ast.id.toString(), ast.constType, Constant) :: env
-    SymbolList(newenv)
-  }
+  override def visitProgram(ast: Program, c: Context) = ast.decl.foldLeft(SymbolList(List[(String, Type, Kind, SIKind)](("io", ClassType("io"), Class, Static))))((x, y) => visit(y, x).asInstanceOf[SymbolList])
 
   override def visitClassDecl(ast: ClassDecl, c: Context) = {
     val env = c.asInstanceOf[SymbolList].list
-    val newenv = if (env.exists(x => x._1 == ast.name.toString())) throw Redeclared(Class, ast.name.toString()) else (ast.name.toString(), ClassType(ast.name.toString()), Class) :: env
-    ast.decl.foldLeft(SymbolList(List[(String, Type, Kind)]()).asInstanceOf[Context])((x, y) => visit(y, x).asInstanceOf[SymbolList])
+    val newenv = if (env.exists(x => x._1 == ast.name.toString())) throw Redeclared(Class, ast.name.toString()) else (ast.name.toString(), ClassType(ast.name.toString()), Class, null) :: env
+    ast.decl.foldLeft(SymbolList(List[(String, Type, Kind, SIKind)]()).asInstanceOf[Context])((x, y) => visit(y, x).asInstanceOf[SymbolList])
     SymbolList(newenv)
   }
 
   override def visitMethodDecl(ast: MethodDecl, c: Context) = {
     val env = c.asInstanceOf[SymbolList].list
     if (env.exists(x => x._1 == ast.name.toString())) throw Redeclared(Method, ast.name.name)
-    val newenv = if (env.exists(x => x._1 == ast.name.toString())) throw Redeclared(Method, ast.name.name) else (ast.name.toString(), ast.returnType, if (ast.returnType != null) Method else SpecialMethod) :: env
+    val newenv = if (env.exists(x => x._1 == ast.name.toString())) throw Redeclared(Method, ast.name.name) else (ast.name.toString(), ast.returnType, if (ast.returnType != null) Method else SpecialMethod, ast.kind) :: env
     SymbolList(newenv)
   }
 
-  override def visitAttributeDecl(ast: AttributeDecl, c: Context) = visit(ast.decl, c)
+  override def visitAttributeDecl(ast: AttributeDecl, c: Context) = {
+    val decl = ast.decl
+    val env = c.asInstanceOf[SymbolList].list
+    decl match {
+      case VarDecl(a, b) => {
+        val newenv = if (env.exists(x => x._1 == a.toString())) throw Redeclared(Attribute, a.toString()) else (a.toString(), b, Variable, ast.kind) :: env
+        SymbolList(newenv)
+      }
+      case ConstDecl(a, b, _) => {
+        val newenv = if (env.exists(x => x._1 == a.toString())) throw Redeclared(Attribute, a.toString()) else (a.toString(), b, Constant, ast.kind) :: env
+        SymbolList(newenv)
+      }
+    }
+  }
 }
 
 class ClassEnvironment extends CheckingVisitor {
-  override def visitProgram(ast: Program, c: Context) = ast.decl.foldLeft(GlobalSymbolList(List(ClassSymbolList("io", "", SymbolList(List(("writeStrLn", VoidType, Method), ("writeStr", VoidType, Method), ("readStr", StringType, Method), ("writeBoolLn", VoidType, Method), ("writeBool", VoidType, Method), ("readBool", BoolType, Method), ("writeFloatLn", VoidType, Method), ("writeFloat", VoidType, Method), ("readFloat", FloatType, Method), ("writeIntLn", VoidType, Method), ("writeInt", VoidType, Method), ("readInt", IntType, Method)))))))((x, y) => visit(y, x).asInstanceOf[GlobalSymbolList])
-
-  override def visitVarDecl(ast: VarDecl, c: Context) = {
-    val env = c.asInstanceOf[SymbolList].list
-    val newenv = if (env.exists(x => x._1 == ast.variable.toString())) throw Redeclared(Attribute, ast.variable.toString()) else (ast.variable.toString(), ast.varType, Variable) :: env
-    SymbolList(newenv)
-  }
-
-  override def visitConstDecl(ast: ConstDecl, c: Context) = {
-    val env = c.asInstanceOf[SymbolList].list
-    val newenv = if (env.exists(x => x._1 == ast.id.toString())) throw Redeclared(Attribute, ast.id.toString()) else (ast.id.toString(), ast.constType, Constant) :: env
-    SymbolList(newenv)
-  }
+  override def visitProgram(ast: Program, c: Context) = ast.decl.foldLeft(GlobalSymbolList(List(ClassSymbolList("io", "", SymbolList(List(("writeStrLn", VoidType, Method, Static), ("writeStr", VoidType, Method, Static), ("readStr", StringType, Method, Static), ("writeBoolLn", VoidType, Method, Static), ("writeBool", VoidType, Method, Static), ("readBool", BoolType, Method, Static), ("writeFloatLn", VoidType, Method, Static), ("writeFloat", VoidType, Method, Static), ("readFloat", FloatType, Method, Static), ("writeIntLn", VoidType, Method, Static), ("writeInt", VoidType, Method, Static), ("readInt", IntType, Method, Static)))))))((x, y) => visit(y, x).asInstanceOf[GlobalSymbolList])
 
   override def visitClassDecl(ast: ClassDecl, c: Context) = {
     val globalList = c.asInstanceOf[GlobalSymbolList].list
     if (globalList.exists(x => x.name == ast.name.toString())) throw Redeclared(Class, ast.name.toString())
-    val attributeList = ast.decl.foldLeft(SymbolList(List[(String, Type, Kind)]()).asInstanceOf[Context])((x, y) => visit(y, x).asInstanceOf[SymbolList]).asInstanceOf[SymbolList]
+    val attributeList = ast.decl.foldLeft(SymbolList(List[(String, Type, Kind, SIKind)]()).asInstanceOf[Context])((x, y) => visit(y, x).asInstanceOf[SymbolList]).asInstanceOf[SymbolList]
     GlobalSymbolList(ClassSymbolList(ast.name.name, ast.parent.name, attributeList) :: globalList)
+  }
+
+  override def visitParamDecl(ast: ParamDecl, c: Context): Object = {
+    val oldenv = c.asInstanceOf[SymbolList].list
+    val newenv = if (oldenv.exists(x => x._1 == ast.id.toString())) throw Redeclared(Parameter, ast.id.toString()) else (ast.id.toString(), ast.paramType, Parameter, Instance) :: oldenv
+    SymbolList(newenv)
   }
 
   override def visitMethodDecl(ast: MethodDecl, c: Context) = {
     val env = c.asInstanceOf[SymbolList].list
     if (env.exists(x => x._1 == ast.name.toString())) throw Redeclared(Method, ast.name.name)
-    val newenv = if (env.exists(x => x._1 == ast.name.toString())) throw Redeclared(Method, ast.name.name) else (ast.name.toString(), ast.returnType, if (ast.returnType != null) Method else SpecialMethod) :: env
+    val paramenv = ast.param.foldLeft(SymbolList(List[(String, Type, Kind, SIKind)]()))((x, y) => visit(y, x).asInstanceOf[SymbolList])
+    val newenv = if (env.exists(x => x._1 == ast.name.toString())) throw Redeclared(Method, ast.name.name) else (ast.name.toString(), MethodType(ast.returnType, paramenv), if (ast.returnType != null) Method else SpecialMethod, ast.kind) :: env
     SymbolList(newenv)
   }
 
-  override def visitAttributeDecl(ast: AttributeDecl, c: Context) = visit(ast.decl, c)
+  override def visitAttributeDecl(ast: AttributeDecl, c: Context) = {
+    val decl = ast.decl
+    val env = c.asInstanceOf[SymbolList].list
+    decl match {
+      case VarDecl(a, b) => {
+        val newenv = if (env.exists(x => x._1 == a.toString())) throw Redeclared(Attribute, a.toString()) else (a.toString(), b, Variable, ast.kind) :: env
+        SymbolList(newenv)
+      }
+      case ConstDecl(a, b, _) => {
+        val newenv = if (env.exists(x => x._1 == a.toString())) throw Redeclared(Attribute, a.toString()) else (a.toString(), b, Constant, ast.kind) :: env
+        SymbolList(newenv)
+      }
+    }
+  }
 }
 
 class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   var parammeterFlag = false;
   var memberAccessFlag = false;
   var assignmentFlag = false;
-  var constantFlag = false;
 
   override def visitProgram(ast: Program, c: Context) = ast.decl.map(visit(_, null))
 
@@ -103,7 +111,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
         case Some(_) =>
       }
     }
-    val newenv = ClassSymbolList(ast.name.name, ast.parent.name, SymbolList(List[(String, Type, Kind)]()))
+    val newenv = ClassSymbolList(ast.name.name, ast.parent.name, SymbolList(List[(String, Type, Kind, SIKind)]()))
     ast.decl.filter(_.isInstanceOf[AttributeDecl]).foldLeft(newenv)((x, y) => visit(y, x).asInstanceOf[ClassSymbolList])
     ast.decl.filter(_.isInstanceOf[MethodDecl]).map(visit(_, newenv))
   }
@@ -113,7 +121,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   override def visitMethodDecl(ast: MethodDecl, c: Context) = {
     if (ast.returnType != null) visit(ast.returnType, c)
     val classenv = c.asInstanceOf[ClassSymbolList]
-    val locenv = ast.param.foldLeft(ClassSymbolList(classenv.name, classenv.parent, SymbolList(List[(String, Type, Kind)]())).asInstanceOf[Context])((x, y) => visit(y, x).asInstanceOf[ClassSymbolList])
+    val locenv = ast.param.foldLeft(ClassSymbolList(classenv.name, classenv.parent, SymbolList(List[(String, Type, Kind, SIKind)]())).asInstanceOf[Context])((x, y) => visit(y, x).asInstanceOf[ClassSymbolList])
     parammeterFlag = true
     visit(ast.body, locenv)
   }
@@ -123,7 +131,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
       visit(ast.paramType, c)
     val classenv = c.asInstanceOf[ClassSymbolList]
     val oldenv = classenv.symlst.list
-    val newenv = if (oldenv.exists(x => x._1 == ast.id.toString())) throw Redeclared(Parameter, ast.id.toString()) else (ast.id.toString(), ast.paramType, Parameter) :: oldenv
+    val newenv = if (oldenv.exists(x => x._1 == ast.id.toString())) throw Redeclared(Parameter, ast.id.toString()) else (ast.id.toString(), ast.paramType, Parameter, Instance) :: oldenv
     ClassSymbolList(classenv.name, classenv.parent, SymbolList(newenv))
   }
 
@@ -131,7 +139,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
     visit(ast.varType, c)
     val classenv = c.asInstanceOf[ClassSymbolList]
     val oldenv = classenv.symlst.list
-    val newenv = if (oldenv.exists(x => x._1 == ast.variable.toString())) throw Redeclared(Variable, ast.variable.toString()) else (ast.variable.toString(), ast.varType, Variable) :: oldenv
+    val newenv = if (oldenv.exists(x => x._1 == ast.variable.toString())) throw Redeclared(Variable, ast.variable.toString()) else (ast.variable.toString(), ast.varType, Variable, Instance) :: oldenv
     ClassSymbolList(classenv.name, classenv.parent, SymbolList(newenv))
   }
 
@@ -140,7 +148,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
     visit(ast.const, c)
     val classenv = c.asInstanceOf[ClassSymbolList]
     val oldenv = classenv.symlst.list
-    val newenv = if (oldenv.exists(x => x._1 == ast.id.toString())) throw Redeclared(Constant, ast.id.toString()) else (ast.id.toString(), ast.constType, Constant) :: oldenv
+    val newenv = if (oldenv.exists(x => x._1 == ast.id.toString())) throw Redeclared(Constant, ast.id.toString()) else (ast.id.toString(), ast.constType, Constant, Instance) :: oldenv
     ClassSymbolList(classenv.name, classenv.parent, SymbolList(newenv))
   }
 
@@ -201,7 +209,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
 
   override def visitId(ast: Id, c: Context) = {
     val env = c.asInstanceOf[ClassSymbolList].symlst.list
-    val id = lookup(ast.name, env, (x: (String, Type, Kind)) => x._1)
+    val id = lookup(ast.name, env, (x: (String, Type, Kind, SIKind)) => x._1)
     id match {
       case None => {
         memberAccessFlag match {
@@ -259,22 +267,23 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
     val env = if (parammeterFlag == true) {
       parammeterFlag = false
       c.asInstanceOf[ClassSymbolList]
-    } else ClassSymbolList(classenv.name, classenv.parent, SymbolList(List[(String, Type, Kind)]()))
+    } else ClassSymbolList(classenv.name, classenv.parent, SymbolList(List[(String, Type, Kind, SIKind)]()))
     val newenv = ast.decl.foldLeft(env)((x, y) => visit(y, x).asInstanceOf[ClassSymbolList])
     ast.stmt.map(visit(_, ClassSymbolList(classenv.name, classenv.parent, SymbolList(classenv.symlst.list ++ newenv.symlst.list))))
     c
   }
 
   override def visitAssign(ast: Assign, c: Context) = {
-    val LHS = visit(ast.leftHandSide, c).asInstanceOf[(Type, Kind)]
-    println(LHS)
-    if (LHS._2 == Constant) throw CannotAssignToConstant(ast)
-    visit(ast.expr, c)
+    val lhs = visit(ast.leftHandSide, c).asInstanceOf[(Type, Kind)]
+    if (lhs._2 == Constant) throw CannotAssignToConstant(ast)
+    val rhs = visit(ast.expr, c).asInstanceOf[(Type, Kind)]
+    if (checkType(lhs._1, rhs._1, clenv.list) == false) throw TypeMismatchInStatement(ast)
     c
   }
 
   override def visitIf(ast: If, c: Context) = {
-    visit(ast.expr, c)
+    val ifExpr = visit(ast.expr, c)
+    //if (ifExpr != BoolType) throw TypeMismatchInStatement(ast)
     visit(ast.thenStmt, c)
     ast.elseStmt match {
       case None =>
@@ -284,10 +293,9 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   }
 
   override def visitCall(ast: Call, c: Context) = {
-    ast.params.map(visit(_, c))
     if (ast.parent.isInstanceOf[Id]) memberAccessFlag = true
-    val callType = visit(ast.parent, c)
-    callType match {
+    val callType = visit(ast.parent, c).asInstanceOf[(Type, Kind)]
+    callType._1 match {
       case ClassType(name) => {
         val findClass = lookup(name, clenv.list, (x: ClassSymbolList) => x.name)
         findClass match {
@@ -296,12 +304,25 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
             val method = lookupInClass(ast.method.name, t, clenv.list)
             method match {
               case None => throw Undeclared(Method, ast.method.name)
-              case Some(t) => if (t._3 != Method) throw Undeclared(Method, ast.method.name) else c
+              case Some(t) => {
+                if (t._3 != Method) throw Undeclared(Method, ast.method.name)
+                else if (t._2.asInstanceOf[MethodType].returnType != VoidType) throw TypeMismatchInStatement(ast)
+                else {
+                  val param = ast.params.foldLeft(List[Type]())((x,y) => visit(y, c).asInstanceOf[(Type, Kind)]._1 :: x)
+                  val protypeparam = t._2.asInstanceOf[MethodType].param.list.map(x => x._2)
+                  if (param.size == protypeparam.size) {
+                    val check = protypeparam.zip(param).foldLeft(true)((x, y) => checkType(y._1, y._2, clenv.list) && x)
+                    if (check == true) c
+                    else throw TypeMismatchInStatement(ast)
+                  }
+                  else throw TypeMismatchInStatement(ast)
+                }
+              }
             }
           }
         }
       }
-      case _ => c
+      case _ => throw TypeMismatchInStatement(ast)
     }
   }
 
@@ -373,10 +394,11 @@ class CheckingVisitor extends Visitor {
 }
 
 case class Property(Type: Type, kind: Kind) extends Context
-case class SymbolList(list: List[(String, Type, Kind)]) extends Context
+case class SymbolList(list: List[(String, Type, Kind, SIKind)]) extends Context
 case class ClassSymbolList(name: String, parent: String, symlst: SymbolList) extends Context
+case class MethodEnvironment(name: String, returnType: Type, locenv: ClassSymbolList) extends Context
 case class GlobalSymbolList(list: List[ClassSymbolList]) extends Context
-
+case class MethodType(returnType: Type, param: SymbolList) extends Type
 object NullType extends Type
 
 trait Utils {
@@ -385,8 +407,8 @@ trait Utils {
     case head :: tail => if (func(head) == name) Some(head) else lookup(name, tail, func)
   }
 
-  def lookupInClass(name: String, currentClass: ClassSymbolList, lst: List[ClassSymbolList]): Option[(String, Type, Kind)] = {
-    val inCurrentClass = lookup(name, currentClass.symlst.list, (x: (String, Type, Kind)) => x._1)
+  def lookupInClass(name: String, currentClass: ClassSymbolList, lst: List[ClassSymbolList]): Option[(String, Type, Kind, SIKind)] = {
+    val inCurrentClass = lookup(name, currentClass.symlst.list, (x: (String, Type, Kind, SIKind)) => x._1)
     inCurrentClass match {
       case None => currentClass.parent match {
         case "" => None
@@ -399,6 +421,46 @@ trait Utils {
         }
       }
       case Some(t) => Some(t)
+    }
+  }
+
+  def checkType(lhs: Type, rhs: Type, lst: List[ClassSymbolList]): Boolean = {
+    lhs match {
+      case VoidType => false
+      case ClassType(t) => {
+        rhs match {
+          case ClassType(r) => {
+            if (r == t) true
+            else {
+              val currentClass = lookup(r, lst, (x: ClassSymbolList) => x.name)
+              currentClass match {
+                case None => false
+                case Some(x) => checkType(lhs, ClassType(x.parent), lst)
+              }
+            }
+          }
+          case NullType => true
+          case _ => false
+        }
+
+      }
+      case ArrayType(ldim, ltype) => {
+        rhs match {
+          case ArrayType(rdim, rtype) => {
+            if (checkType(ltype, rtype, lst) == true && ldim == rdim) true
+            else false
+          }
+          case _ => false
+        }
+      }
+      case FloatType => {
+        if (rhs == FloatType || rhs == IntType) true
+        else false
+      }
+      case _ => {
+        if (rhs == lhs) true
+        else false
+      }
     }
   }
 }
