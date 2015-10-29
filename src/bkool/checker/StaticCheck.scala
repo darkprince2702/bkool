@@ -57,7 +57,7 @@ class GlobalEnvironment extends CheckingVisitor {
 }
 
 class ClassEnvironment extends CheckingVisitor {
-  override def visitProgram(ast: Program, c: Context) = ast.decl.foldLeft(GlobalSymbolList(List(ClassSymbolList("io", "", SymbolList(List(("writeStrLn", VoidType, Method, Static), ("writeStr", VoidType, Method, Static), ("readStr", StringType, Method, Static), ("writeBoolLn", VoidType, Method, Static), ("writeBool", VoidType, Method, Static), ("readBool", BoolType, Method, Static), ("writeFloatLn", VoidType, Method, Static), ("writeFloat", VoidType, Method, Static), ("readFloat", FloatType, Method, Static), ("writeIntLn", VoidType, Method, Static), ("writeInt", VoidType, Method, Static), ("readInt", IntType, Method, Static)))))))((x, y) => visit(y, x).asInstanceOf[GlobalSymbolList])
+  override def visitProgram(ast: Program, c: Context) = ast.decl.foldLeft(GlobalSymbolList(List(ClassSymbolList("io", "", SymbolList(List(("writeStrLn", MethodType(VoidType,SymbolList(List(("anArg",StringType,Parameter,Instance)))), Method, Static), ("writeStr", MethodType(VoidType,SymbolList(List(("anArg",StringType,Parameter,Instance)))), Method, Static), ("readStr", MethodType(StringType,SymbolList(List())), Method, Static), ("writeBoolLn", MethodType(VoidType,SymbolList(List(("anArg",BoolType,Parameter,Instance)))), Method, Static), ("writeBool", MethodType(VoidType,SymbolList(List(("anArg",BoolType,Parameter,Instance)))), Method, Static), ("readBool", MethodType(BoolType,SymbolList(List())), Method, Static), ("writeFloatLn", MethodType(VoidType,SymbolList(List(("anArg",FloatType,Parameter,Instance)))), Method, Static), ("writeFloat", MethodType(VoidType,SymbolList(List(("anArg",FloatType,Parameter,Instance)))), Method, Static), ("readFloat", MethodType(FloatType,SymbolList(List())), Method, Static), ("writeIntLn", MethodType(VoidType,SymbolList(List(("anArg",IntType,Parameter,Instance)))), Method, Static), ("writeInt", MethodType(VoidType,SymbolList(List(("anArg",IntType,Parameter,Instance)))), Method, Static), ("readInt", MethodType(IntType,SymbolList(List())), Method, Static)))))))((x, y) => visit(y, x).asInstanceOf[GlobalSymbolList])
 
   override def visitClassDecl(ast: ClassDecl, c: Context) = {
     val globalList = c.asInstanceOf[GlobalSymbolList].list
@@ -100,7 +100,9 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   var parammeterFlag = false;
   var memberAccessFlag = false;
   var assignmentFlag = false;
-
+  var constantExprFlag = false;
+  var loopLevel = 0;
+  
   override def visitProgram(ast: Program, c: Context) = ast.decl.map(visit(_, null))
 
   override def visitClassDecl(ast: ClassDecl, c: Context) = {
@@ -123,7 +125,9 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
     val classenv = c.asInstanceOf[ClassSymbolList]
     val locenv = ast.param.foldLeft(ClassSymbolList(classenv.name, classenv.parent, SymbolList(List[(String, Type, Kind, SIKind)]())).asInstanceOf[Context])((x, y) => visit(y, x).asInstanceOf[ClassSymbolList])
     parammeterFlag = true
-    visit(ast.body, locenv)
+    val body = visit(ast.body, MethodEnvironment(ast.name.name, ast.returnType, locenv.asInstanceOf[ClassSymbolList])).asInstanceOf[Statement]
+    if (body.isReturn == false && ast.returnType != VoidType && ast.returnType != null) throw MethodNotReturn(ast.name.name)
+    else c
   }
 
   override def visitParamDecl(ast: ParamDecl, c: Context): Object = {
@@ -136,20 +140,26 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   }
 
   override def visitVarDecl(ast: VarDecl, c: Context) = {
-    visit(ast.varType, c)
-    val classenv = c.asInstanceOf[ClassSymbolList]
-    val oldenv = classenv.symlst.list
+    val env = if (c.isInstanceOf[MethodEnvironment]) c.asInstanceOf[MethodEnvironment].locenv else c.asInstanceOf[ClassSymbolList]
+    visit(ast.varType, env)
+    val oldenv = env.symlst.list
     val newenv = if (oldenv.exists(x => x._1 == ast.variable.toString())) throw Redeclared(Variable, ast.variable.toString()) else (ast.variable.toString(), ast.varType, Variable, Instance) :: oldenv
-    ClassSymbolList(classenv.name, classenv.parent, SymbolList(newenv))
+    val locenv = ClassSymbolList(env.name, env.parent, SymbolList(newenv))
+    if (c.isInstanceOf[MethodEnvironment]) MethodEnvironment(c.asInstanceOf[MethodEnvironment].name, c.asInstanceOf[MethodEnvironment].returnType, locenv) else locenv
   }
 
   override def visitConstDecl(ast: ConstDecl, c: Context) = {
-    visit(ast.constType, c)
-    visit(ast.const, c)
-    val classenv = c.asInstanceOf[ClassSymbolList]
-    val oldenv = classenv.symlst.list
+    val env = if (c.isInstanceOf[MethodEnvironment]) c.asInstanceOf[MethodEnvironment].locenv else c.asInstanceOf[ClassSymbolList]
+    
+    constantExprFlag = true
+    val exprType = visit(ast.const, c).asInstanceOf[(Type, Kind)]
+    constantExprFlag = false
+    
+    if (checkType(ast.constType, exprType._1, clenv.list) == false) throw TypeMismatchInConstant(ast)
+    val oldenv = env.symlst.list
     val newenv = if (oldenv.exists(x => x._1 == ast.id.toString())) throw Redeclared(Constant, ast.id.toString()) else (ast.id.toString(), ast.constType, Constant, Instance) :: oldenv
-    ClassSymbolList(classenv.name, classenv.parent, SymbolList(newenv))
+    val locenv = ClassSymbolList(env.name, env.parent, SymbolList(newenv))
+    if (c.isInstanceOf[MethodEnvironment]) MethodEnvironment(c.asInstanceOf[MethodEnvironment].name, c.asInstanceOf[MethodEnvironment].returnType, locenv) else locenv
   }
 
   override def visitArrayType(ast: ArrayType, c: Context) = {
@@ -165,16 +175,102 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   }
 
   override def visitBinaryOp(ast: BinaryOp, c: Context) = {
-    val typeOfLeft = visit(ast.left, c).asInstanceOf[(Type, Kind)]
-    val typeOfRight = visit(ast.right, c).asInstanceOf[(Type, Kind)]
-    typeOfRight
+    val left = visit(ast.left, c).asInstanceOf[(Type, Kind)]
+    val right = visit(ast.right, c).asInstanceOf[(Type, Kind)]
+    val lt = left._1
+    val rt = right._1
+    val sikind = if (left._2 == Variable || right._2 == Variable) Variable else Constant
+    ast.op match {
+      case "+" => {
+        if ((lt == IntType || lt == FloatType) && (rt == IntType || rt == FloatType))
+          if (lt == FloatType || rt == FloatType) (FloatType, left._2)
+          else (IntType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "-" => {
+        if ((lt == IntType || lt == FloatType) && (rt == IntType || rt == FloatType))
+          if (lt == FloatType || rt == FloatType) (FloatType, left._2)
+          else (IntType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "*" => {
+        if ((lt == IntType || lt == FloatType) && (rt == IntType || rt == FloatType))
+          if (lt == FloatType || rt == FloatType) (FloatType, left._2)
+          else (IntType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "/" => {
+        if ((lt == IntType || lt == FloatType) && (rt == IntType || rt == FloatType)) (FloatType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "\\" => {
+        if (lt == IntType && rt == IntType) (IntType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "%" => {
+        if (lt == IntType && rt == IntType) (IntType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "&&" => {
+        if (lt == BoolType && rt == BoolType) (BoolType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "||" => {
+        if (lt == BoolType && rt == BoolType) (BoolType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "==" => {
+        if (lt != VoidType && rt != VoidType && ( (lt == rt) || (lt == NullType) || (rt == NullType))) (BoolType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "<>" => {
+        if (lt != VoidType && rt != VoidType && ( (lt == rt) || (lt == NullType) || (rt == NullType))) (BoolType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case ">" => {
+        if ((lt == IntType || lt == FloatType) && (rt == IntType || rt == FloatType)) (BoolType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "<" => {
+        if ((lt == IntType || lt == FloatType) && (rt == IntType || rt == FloatType)) (BoolType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case ">=" => {
+        if ((lt == IntType || lt == FloatType) && (rt == IntType || rt == FloatType)) (BoolType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "<=" => {
+        if ((lt == IntType || lt == FloatType) && (rt == IntType || rt == FloatType)) (BoolType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "^" => {
+        if (lt == StringType && rt == StringType) (StringType, left._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+    }
   }
 
   override def visitUnaryOp(ast: UnaryOp, c: Context) = {
-    visit(ast.body, c)
+    val expr = visit(ast.body, c).asInstanceOf[(Type, Kind)]
+    val rt = expr._1
+    ast.op match {
+      case "+" => {
+        if (rt == IntType || rt == FloatType) (rt, expr._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "-" => {
+        if (rt == IntType || rt == FloatType) (rt, expr._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+      case "!" => {
+        if (rt == BoolType) (rt, expr._2)
+        else throw TypeMismatchInExpression(ast)
+      }
+    }
   }
 
   override def visitNewExpr(ast: NewExpr, c: Context) = {
+    if (constantExprFlag == true) throw NotConstantExpression(ast)
     ast.exprs.map(visit(_, c))
     val findClass = lookup(ast.name.name, clenv.list, (x: ClassSymbolList) => x.name)
     findClass match {
@@ -184,7 +280,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   }
 
   override def visitCallExpr(ast: CallExpr, c: Context) = {
-    ast.params.map(visit(_, c))
+    if (constantExprFlag == true) throw NotConstantExpression(ast)
     if (ast.cName.isInstanceOf[Id]) memberAccessFlag = true
     val callType = visit(ast.cName, c).asInstanceOf[(Type, Kind)]
     callType._1 match {
@@ -196,19 +292,33 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
             val method = lookupInClass(ast.method.name, t, clenv.list)
             method match {
               case None => throw Undeclared(Method, ast.method.name)
-              case Some(t) => if (t._3 != Method) throw Undeclared(Method, ast.method.name) else {
-                (t._2, t._3)
+              case Some(t) => {
+                if (t._3 != Method) throw Undeclared(Method, ast.method.name)
+                else if (t._2.asInstanceOf[MethodType].returnType == VoidType) throw TypeMismatchInExpression(ast)
+                else {
+                  val param = ast.params.foldLeft(List[Type]())((x, y) => visit(y, c).asInstanceOf[(Type, Kind)]._1 :: x)
+                  val protypeparam = t._2.asInstanceOf[MethodType].param.list.map(x => x._2)
+                  if (param.size == protypeparam.size) {
+                    val check = protypeparam.zip(param).foldLeft(true)((x, y) => checkType(y._1, y._2, clenv.list) && x)
+                    if (check == true) (t._2.asInstanceOf[MethodType].returnType, t._3)
+                    else throw TypeMismatchInExpression(ast)
+                  } else throw TypeMismatchInExpression(ast)
+                }
               }
             }
           }
         }
       }
-      case _ => callType
+      case _ => throw TypeMismatchInExpression(ast)
     }
   }
 
   override def visitId(ast: Id, c: Context) = {
-    val env = c.asInstanceOf[ClassSymbolList].symlst.list
+    val env = c match {
+      case MethodEnvironment(_, _, t) => t.symlst.list
+      case ClassSymbolList(_, _, t) => t.list
+    }
+
     val id = lookup(ast.name, env, (x: (String, Type, Kind, SIKind)) => x._1)
     id match {
       case None => {
@@ -231,12 +341,10 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   }
 
   override def visitArrayCell(ast: ArrayCell, c: Context) = {
-    visit(ast.idx, c)
-    val arrayType = visit(ast.arr, c).asInstanceOf[(Type, Kind)]
-    arrayType._1 match {
-      case ArrayType(_, t) => (t, arrayType._2)
-      case _ => arrayType
-    }
+    val idx = visit(ast.idx, c).asInstanceOf[(Type, Kind)]
+    val arr = visit(ast.arr, c).asInstanceOf[(Type, Kind)]
+    if (arr._1.isInstanceOf[ArrayType] && idx._1 == IntType) (arr._1.asInstanceOf[ArrayType].eleType, arr._2)
+    else throw TypeMismatchInExpression(ast)
   }
 
   override def visitFieldAccess(ast: FieldAccess, c: Context) = {
@@ -251,26 +359,31 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
             val field = lookupInClass(ast.field.name, t, clenv.list)
             field match {
               case None => throw Undeclared(Attribute, ast.field.name)
-              case Some(t) => if (t._3 != Constant && t._3 != Variable) throw Undeclared(Attribute, ast.field.name) else {
-                (t._2, t._3)
+              case Some(x) => {
+                if (x._3 != Constant && x._3 != Variable) throw Undeclared(Attribute, ast.field.name)
+                else if (x._4 != Static && checkSuperclass(c.asInstanceOf[MethodEnvironment].locenv, t.name, clenv.list) == false) throw CannotAccessPrivateAttribute( x._5, x._1)
+                else (x._2, x._3)
               }
             }
           }
         }
       }
-      case _ => fieldType
+      case _ => throw TypeMismatchInExpression(ast)
     }
   }
 
   override def visitBlock(ast: Block, c: Context) = {
-    val classenv = c.asInstanceOf[ClassSymbolList]
+    val methodenv = c.asInstanceOf[MethodEnvironment]
+    val classenv = methodenv.locenv
     val env = if (parammeterFlag == true) {
       parammeterFlag = false
-      c.asInstanceOf[ClassSymbolList]
+      classenv
     } else ClassSymbolList(classenv.name, classenv.parent, SymbolList(List[(String, Type, Kind, SIKind)]()))
     val newenv = ast.decl.foldLeft(env)((x, y) => visit(y, x).asInstanceOf[ClassSymbolList])
-    ast.stmt.map(visit(_, ClassSymbolList(classenv.name, classenv.parent, SymbolList(classenv.symlst.list ++ newenv.symlst.list))))
-    c
+    val context = MethodEnvironment(methodenv.name, methodenv.returnType, ClassSymbolList(classenv.name, classenv.parent, SymbolList(classenv.symlst.list ++ newenv.symlst.list)))
+    val isReturn = ast.stmt.foldLeft(false)((x, y) => visit(y, context).asInstanceOf[Statement].isReturn || x)
+    //ast.stmt.map(visit(_, context))
+    Statement(isReturn)
   }
 
   override def visitAssign(ast: Assign, c: Context) = {
@@ -278,18 +391,18 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
     if (lhs._2 == Constant) throw CannotAssignToConstant(ast)
     val rhs = visit(ast.expr, c).asInstanceOf[(Type, Kind)]
     if (checkType(lhs._1, rhs._1, clenv.list) == false) throw TypeMismatchInStatement(ast)
-    c
+    Statement(false)
   }
 
   override def visitIf(ast: If, c: Context) = {
-    val ifExpr = visit(ast.expr, c)
-    //if (ifExpr != BoolType) throw TypeMismatchInStatement(ast)
-    visit(ast.thenStmt, c)
-    ast.elseStmt match {
-      case None =>
-      case Some(t) => visit(t, c)
+    val ifExpr = visit(ast.expr, c).asInstanceOf[(Type, Kind)]
+    if (ifExpr._1 != BoolType) throw TypeMismatchInStatement(ast)
+    val thenReturn = visit(ast.thenStmt, c).asInstanceOf[Statement]
+    val elseReturn = ast.elseStmt match {
+      case None => Statement(false)
+      case Some(t) => visit(t, c).asInstanceOf[Statement]
     }
-    c
+    Statement(thenReturn.isReturn && elseReturn.isReturn)
   }
 
   override def visitCall(ast: Call, c: Context) = {
@@ -308,14 +421,13 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
                 if (t._3 != Method) throw Undeclared(Method, ast.method.name)
                 else if (t._2.asInstanceOf[MethodType].returnType != VoidType) throw TypeMismatchInStatement(ast)
                 else {
-                  val param = ast.params.foldLeft(List[Type]())((x,y) => visit(y, c).asInstanceOf[(Type, Kind)]._1 :: x)
+                  val param = ast.params.foldLeft(List[Type]())((x, y) => visit(y, c).asInstanceOf[(Type, Kind)]._1 :: x)
                   val protypeparam = t._2.asInstanceOf[MethodType].param.list.map(x => x._2)
                   if (param.size == protypeparam.size) {
                     val check = protypeparam.zip(param).foldLeft(true)((x, y) => checkType(y._1, y._2, clenv.list) && x)
-                    if (check == true) c
+                    if (check == true) Statement(false)
                     else throw TypeMismatchInStatement(ast)
-                  }
-                  else throw TypeMismatchInStatement(ast)
+                  } else throw TypeMismatchInStatement(ast)
                 }
               }
             }
@@ -327,14 +439,22 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   }
 
   override def visitWhile(ast: While, c: Context) = {
-    visit(ast.expr, c)
+    val expr = visit(ast.expr, c).asInstanceOf[(Type, Kind)]
+    if (expr._1 != BoolType) throw TypeMismatchInStatement(ast)
+    loopLevel = loopLevel + 1
     visit(ast.loop, c)
-    c
+    loopLevel = loopLevel - 1
+    Statement(false)
   }
 
+  override def visitBreak(ast: Break.type, c: Context) = if (loopLevel == 0) throw BreakNotInLoop(0) else Statement(false)
+
+  override def visitContinue(ast: Continue.type, c: Context) = if (loopLevel == 0) throw ContinueNotInLoop(0) else Statement(false)
+
   override def visitReturn(ast: Return, c: Context) = {
-    visit(ast.expr, c)
-    c
+    val rttype = visit(ast.expr, c).asInstanceOf[(Type, Kind)]
+    if (checkType(c.asInstanceOf[MethodEnvironment].returnType, rttype._1, clenv.list) == false) throw TypeMismatchInStatement(ast)
+    Statement(true)
   }
 
   override def visitIntLiteral(ast: IntLiteral, c: Context) = (IntType, Constant)
@@ -348,7 +468,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   override def visitNullLiteral(ast: NullLiteral.type, c: Context) = (NullType, Constant)
 
   override def visitSelfLiteral(ast: SelfLiteral.type, c: Context) = {
-    (ClassType(c.asInstanceOf[ClassSymbolList].name), Variable)
+    (ClassType(c.asInstanceOf[MethodEnvironment].locenv.name), Variable)
   }
 }
 
@@ -393,7 +513,7 @@ class CheckingVisitor extends Visitor {
   override def visitSelfLiteral(ast: SelfLiteral.type, c: Context): Object = c
 }
 
-case class Property(Type: Type, kind: Kind) extends Context
+case class Statement(isReturn: Boolean) extends Context
 case class SymbolList(list: List[(String, Type, Kind, SIKind)]) extends Context
 case class ClassSymbolList(name: String, parent: String, symlst: SymbolList) extends Context
 case class MethodEnvironment(name: String, returnType: Type, locenv: ClassSymbolList) extends Context
@@ -407,7 +527,7 @@ trait Utils {
     case head :: tail => if (func(head) == name) Some(head) else lookup(name, tail, func)
   }
 
-  def lookupInClass(name: String, currentClass: ClassSymbolList, lst: List[ClassSymbolList]): Option[(String, Type, Kind, SIKind)] = {
+  def lookupInClass(name: String, currentClass: ClassSymbolList, lst: List[ClassSymbolList]): Option[(String, Type, Kind, SIKind, String)] = {
     val inCurrentClass = lookup(name, currentClass.symlst.list, (x: (String, Type, Kind, SIKind)) => x._1)
     inCurrentClass match {
       case None => currentClass.parent match {
@@ -420,7 +540,7 @@ trait Utils {
           }
         }
       }
-      case Some(t) => Some(t)
+      case Some(t) => Some((t._1, t._2, t._3, t._4, currentClass.name))
     }
   }
 
@@ -442,7 +562,6 @@ trait Utils {
           case NullType => true
           case _ => false
         }
-
       }
       case ArrayType(ldim, ltype) => {
         rhs match {
@@ -460,6 +579,20 @@ trait Utils {
       case _ => {
         if (rhs == lhs) true
         else false
+      }
+    }
+  }
+
+  def checkSuperclass(current: ClassSymbolList, that: String, lst: List[ClassSymbolList]): Boolean = {
+    if (current.name == that) true
+    else {
+      if (current.parent == "") false
+      else {
+        val parentClass = lookup(current.parent, lst, (x: ClassSymbolList) => x.name)
+        parentClass match {
+          case None => false
+          case Some(t) => checkSuperclass(t, that, lst)
+        }
       }
     }
   }
