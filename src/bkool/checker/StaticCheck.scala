@@ -143,10 +143,10 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
     val locenv = ast.param.foldLeft(ClassSymbolList(classenv.name, classenv.parent, SymbolList(List[(String, Type, Kind, SIKind)]())).asInstanceOf[Context])((x, y) => visit(y, x).asInstanceOf[ClassSymbolList])
     parammeterFlag = true
     methodReturnType = ast.returnType
-    
+
     // Non-void empty methods don't need to return
     val isEmptyMethod = ast.body.asInstanceOf[Block].decl == List[Decl]() && ast.body.asInstanceOf[Block].stmt == List[Stmt]()
-    
+
     val body = visit(ast.body, locenv).asInstanceOf[Statement]
     if (body.isReturn == false && ast.returnType != VoidType && ast.returnType != null && isEmptyMethod == false) throw MethodNotReturn(ast.name.name)
     else c
@@ -173,13 +173,15 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   override def visitConstDecl(ast: ConstDecl, c: Context) = {
     val env = c.asInstanceOf[ClassSymbolList]
     visit(ast.constType, env)
-    val oldenv = env.symlst.list
-    val newenv = if (oldenv.exists(x => x._1 == ast.id.toString())) throw Redeclared(Constant, ast.id.toString()) else (ast.id.toString(), ast.constType, Constant, Instance) :: oldenv
+
     // 2.10
     val exprType = visit(ast.const, c).asInstanceOf[(Type, Kind)]
     if (exprType._2 != Constant) throw NotConstantExpression(ast.const)
     // 2.6
     if (checkType(ast.constType, exprType._1, clenv.list) == false) throw TypeMismatchInConstant(ast)
+
+    val oldenv = env.symlst.list
+    val newenv = if (oldenv.exists(x => x._1 == ast.id.toString())) throw Redeclared(Constant, ast.id.toString()) else (ast.id.toString(), ast.constType, Constant, Instance) :: oldenv
     val locenv = ClassSymbolList(env.name, env.parent, SymbolList(newenv))
     locenv
   }
@@ -292,7 +294,6 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
   }
 
   override def visitNewExpr(ast: NewExpr, c: Context) = {
-    //if (constantExprFlag == true) throw NotConstantExpression(ast)
     val findClass = lookup(ast.name.name, clenv.list, (x: ClassSymbolList) => x.name)
     findClass match {
       case None => throw Undeclared(Class, ast.name.name)
@@ -301,7 +302,9 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
         val protypeparam = constructor match {
           case None => List[Type]()
           case Some(x) => {
-            x._2.asInstanceOf[MethodType].param.list.foldLeft(List[Type]())((x, y) => x :+ y._2 )
+            if (x._2.isInstanceOf[MethodType])
+              x._2.asInstanceOf[MethodType].param.list.foldLeft(List[Type]())((x, y) => x :+ y._2)
+            else List[Type]()
           }
         }
         val param = ast.exprs.foldLeft(List[Type]())((x, y) => visit(y, c).asInstanceOf[(Type, Kind)]._1 :: x)
@@ -328,10 +331,10 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
               case None => throw Undeclared(Method, ast.method.name)
               case Some(t) => {
                 if (t._3 != Method) throw TypeMismatchInExpression(ast)
-                else if (t._2.asInstanceOf[MethodType].returnType == VoidType) throw TypeMismatchInExpression(ast)
+                // else if (t._2.asInstanceOf[MethodType].returnType == VoidType) throw TypeMismatchInExpression(ast)
                 else {
                   val param = ast.params.foldLeft(List[Type]())((x, y) => visit(y, c).asInstanceOf[(Type, Kind)]._1 :: x)
-                  val protypeparam = t._2.asInstanceOf[MethodType].param.list.foldLeft(List[Type]())((x, y) => x :+ y._2 )
+                  val protypeparam = t._2.asInstanceOf[MethodType].param.list.foldLeft(List[Type]())((x, y) => x :+ y._2)
                   if (param.size == protypeparam.size) {
                     val check = protypeparam.zip(param).foldLeft(true)((x, y) => checkType(y._1, y._2, clenv.list) && x)
                     if (check == true) (t._2.asInstanceOf[MethodType].returnType, Variable)
@@ -454,7 +457,7 @@ class TypeChecking(clenv: GlobalSymbolList) extends CheckingVisitor with Utils {
               case None => throw Undeclared(Method, ast.method.name)
               case Some(t) => {
                 if (t._3 != Method) throw TypeMismatchInStatement(ast)
-                else if (t._2.asInstanceOf[MethodType].returnType != VoidType) throw TypeMismatchInStatement(ast)
+                // else if (t._2.asInstanceOf[MethodType].returnType != VoidType) throw TypeMismatchInStatement(ast)
                 else {
                   val param = ast.params.foldLeft(List[Type]())((x, y) => visit(y, c).asInstanceOf[(Type, Kind)]._1 :: x)
                   val protypeparam = t._2.asInstanceOf[MethodType].param.list.map(x => x._2)
@@ -603,6 +606,7 @@ trait Utils {
             if (checkType(ltype, rtype, lst) == true && ldim == rdim) true
             else false
           }
+          case NullType => true
           case _ => false
         }
       }
